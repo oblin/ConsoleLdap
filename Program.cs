@@ -1,5 +1,8 @@
 ﻿using Novell.Directory.Ldap;
 using System;
+using System.Collections;
+using System.Linq;
+using System.Text;
 
 namespace ConsoleLdap
 {
@@ -8,14 +11,10 @@ namespace ConsoleLdap
         static void Main(string[] args)
         {
             Console.WriteLine("Hello World!");
-            var host = "192.168.1.106";
-            var binddn = "cn=admin,dc=ablh,dc=com,dc=tw";
-            var bindpwd = "l490910";
-            var basedc = "dc=ablh,dc=com,dc=tw";
 
-            using var connection = new LdapConnection();
-            connection.Connect(host, LdapConnection.DefaultPort);
-            connection.Bind(binddn, bindpwd);
+            string basedc = "dc=ablh,dc=com,dc=tw";
+            var ldapHelper = new LdapHelper(basedc);
+            var connection = ldapHelper.AdminConnection;
 
             Console.WriteLine("Example 1. Search uid=yiming with attribute:");
             var username = "yiming";
@@ -34,6 +33,7 @@ namespace ConsoleLdap
             // entities => LdapSearchResults
             // requiredAttributes => null 代表讀回全部 attributes
             var entities = connection.Search(basedc, LdapConnection.ScopeSub, searchFilter, requiredAttributes, false);
+            //var entities = connection.Search(basedc, LdapConnection.ScopeSub, searchFilter, null, false);
             
             string userdn = null;
             while(entities.HasMore())
@@ -41,7 +41,7 @@ namespace ConsoleLdap
                 LdapEntry entity = entities.Next();
                 Console.WriteLine($"entity dn: {entity.Dn}");
                 LdapAttributeSet attrSet = entity.GetAttributeSet();
-                System.Collections.IEnumerator enumerator = attrSet.GetEnumerator();
+                IEnumerator enumerator = attrSet.GetEnumerator();
                 while (enumerator.MoveNext())
                 {
                     LdapAttribute attribute = (LdapAttribute)enumerator.Current;
@@ -84,7 +84,7 @@ namespace ConsoleLdap
 
             Console.WriteLine("Example 2. Add userr Smith with password: l123456");
 
-            connection.Bind(binddn, bindpwd);
+            connection = ldapHelper.BindAdmin();
 
             string containerName = "ou=IT,ou=ABL,dc=ablh,dc=com,dc=tw";
             string uid = "e11001";
@@ -96,18 +96,93 @@ namespace ConsoleLdap
 		    attributeSet.Add(new LdapAttribute("uid", uid));        
 		    attributeSet.Add(new LdapAttribute("telephonenumber","1 801 555 1212"));                                                     
 		    attributeSet.Add(new LdapAttribute("mail", "JSmith@ablh.com.tw"));
-		    attributeSet.Add(new LdapAttribute("userpassword","l123456"));  
+            attributeSet.Add(new LdapAttribute("userpassword", "l123456"));
 
             var dn = $"uid={uid}," + containerName;
-            LdapEntry newEntry = new LdapEntry(dn, attributeSet);
+            var entry = ldapHelper.FindDn(dn);
+            if (entry == null)
+            {
+                LdapEntry newEntry = new LdapEntry(dn, attributeSet);
+                try
+                {
+                    connection.Add(newEntry);
+                }
+                catch (LdapException ex)
+                {
+                    Console.WriteLine($"Add entry {dn} Error: {ex.Message}, Ldap Error: {ex.LdapErrorMessage}");
+                }
+            }
+            else
+            {
+                //Console.WriteLine($"dn: {dn} had already exist, proceed modification");
+                //ArrayList modList = new ArrayList();
 
+                //// Add new Value of.
+                //LdapAttribute attr = new LdapAttribute("description", "modification description");
+                //modList.Add(new LdapModification(LdapModification.Add, attr));
+
+                //// Modify value
+                //attr = new LdapAttribute("mail", "james_smith@ablh.com.tw");
+                //modList.Add(new LdapModification(LdapModification.Replace, attr));
+
+                //LdapModification[] mods = new LdapModification[modList.Count];
+                ////Type type = Type.GetType("Novell.Directory.Ldap.LdapModification");
+                //mods = (LdapModification[])modList.ToArray(typeof(LdapModification));
+                //connection.Modify(dn, mods);
+
+                connection.Delete(dn);
+            }
+
+            Console.WriteLine("Example 3. Add organization Unit");
+            containerName = "ou=ABL,dc=ablh,dc=com,dc=tw";
+            string ou = "財會部";
+            dn = $"ou={ou}," + containerName;
+            attributeSet = new LdapAttributeSet();
+            attributeSet.Add(new LdapAttribute("objectclass", "organizationalUnit"));
+            entry = ldapHelper.FindDn(dn);
+            if (entry == null)
+            {
+                LdapEntry newEntry = new LdapEntry(dn, attributeSet);
+                try
+                {
+                    connection.Add(newEntry);
+                }
+                catch (LdapException ex)
+                {
+                    Console.WriteLine($"Add entry {dn} Error: {ex.Message}, Ldap Error: {ex.LdapErrorMessage}");
+                }
+            }
+
+            Console.WriteLine("Example 4. change password");
+            dn = "uid=yiming,ou=IT,ou=ABL,dc=ablh,dc=com,dc=tw";
+            LdapAttribute attributePassword = new LdapAttribute("userPassword",
+                "l490910");
+            connection.Modify(dn, new LdapModification(LdapModification.Replace, attributePassword));
+
+
+            Console.WriteLine("Example 5. Verify password");
+            // 以下方式不行，主要原因是因為資料庫目前是存加密後的 {SHA} 密碼，無法跟明碼比對
+            //attributePassword = new LdapAttribute("userPassword", "l123456");
+            //bool correct = connection.Compare(dn, attributePassword);
+            //Console.WriteLine(correct ? "The password: l123456 is correct." : "The password l123456 is incorrect.\n");
             try
             {
-                connection.Add(newEntry);
+                connection.Bind(dn, "l123456");
+                Console.WriteLine($"password l123456 verify: {connection.Bound}");
             }
             catch (LdapException ex)
             {
-                Console.WriteLine($"Add entry {dn} Error:" + ex.LdapErrorMessage);
+                Console.WriteLine($"user {username} connect bind failed, exception: {ex.LdapErrorMessage}");
+            }
+
+            try
+            {
+                connection.Bind(dn, "l490910");
+                Console.WriteLine($"password l490910 verify: {connection.Bound}");
+            }
+            catch (LdapException ex)
+            {
+                Console.WriteLine($"user {username} connect bind failed, exception: {ex.LdapErrorMessage}");
             }
 
             connection.Disconnect();
